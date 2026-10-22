@@ -108,18 +108,17 @@ function onHostMessage(conn,msg){
  }
  const p=players[conn.peer];if(!p)return;
  if(msg.type==="ready"&&game.phase==="lobby"){p.ready=!!msg.ready;publish();const arr=Object.values(players);if(arr.length&&arr.filter(x=>x.ready).length/arr.length>=.8)startQuiz();return}
- if(msg.type==="answer"&&game.phase==="question"&&p.answer===undefined){
-  const q=quizData[game.index];p.answer=msg.value;
-  if(q.type==="choice"&&Number(msg.value)===q.correctAnswer){const remaining=Math.max(0,game.deadline-Date.now());p.score+=1000+Math.round(remaining/100);beep(880,.15,"sine",.04)}
-  publish();return
+ if(msg.type==="answer"&&game.phase==="question"){
+  const q=quizData[game.index];
+  if(q.type==="choice"&&Number.isInteger(Number(msg.value))&&Number(msg.value)>=0&&Number(msg.value)<q.options.length){p.answer=Number(msg.value);p.answerAt=Date.now();publish();return}
+  if(q.type==="wordcloud"&&typeof msg.value==="string"){p.answer=msg.value.trim().replace(/\s+/g," ").slice(0,32);p.answerAt=Date.now();publish();return}
  }
 }
 function snapshot(){return{game:{phase:game.phase,index:game.index,deadline:game.deadline},players:Object.entries(players).map(([id,p])=>({id,name:p.name,ready:p.ready,score:p.score,answer:p.answer})),serverNow:Date.now()}}
 function publish(){if(host){const data=snapshot();connections.forEach(c=>{if(c.open)try{c.send({type:"state",data})}catch(e){}});renderHost()}}
 function startQuiz(){if(game.phase!=="lobby")return;game={phase:"question",index:0,deadline:Date.now()+15000};Object.values(players).forEach(p=>{p.answer=undefined});fanfare();publish()}
 function startTicker(){clearInterval(timerTicker);const update=()=>{const el=document.getElementById("timer");if(!el)return;const left=Math.max(0,Math.ceil((game.deadline-Date.now())/1000));el.textContent=left;el.classList.toggle("low",left<=5);if(left<=5&&left>0)beep(460,.05,"sine",.018);if(left===0&&game.phase==="question"){if(quizData[game.index].type==="wordcloud")revealWordCloud();else revealAnswer()}};update();timerTicker=setInterval(update,500)}
-function revealAnswer(){if(game.phase!=="question")return;game.phase="reveal";game.deadline=0;clearInterval(timerTicker);beep(740,.18,"triangle",.05);publish()}
-function revealWordCloud(){if(game.phase!=="question")return;game.phase="reveal";game.deadline=0;clearInterval(timerTicker);publish()}
+function revealAnswer(){if(game.phase!=="question")return;const q=quizData[game.index];Object.values(players).forEach(p=>{if(Number(p.answer)===q.correctAnswer){const elapsed=Math.max(0,game.deadline-(p.answerAt||game.deadline));p.score+=1000+Math.round(elapsed/100)}});game.phase="reveal";game.deadline=0;clearInterval(timerTicker);beep(740,.18,"triangle",.05);publish()}function revealWordCloud(){if(game.phase!=="question")return;game.phase="reveal";game.deadline=0;clearInterval(timerTicker);publish()}
 function nextQuestion(){if(game.index>=quizData.length-1){game.phase="finished";fanfare();publish();return}game.index++;game.phase="question";game.deadline=Date.now()+(quizData[game.index].type==="wordcloud"?30000:15000);Object.values(players).forEach(p=>{delete p.answer});publish()}
 function restartQuiz(){game={phase:"question",index:0,deadline:Date.now()+15000};Object.values(players).forEach(p=>{p.score=0;delete p.answer});publish()}
 function renderLeaderboard(){const rows=Object.values(players).sort((a,b)=>b.score-a.score);return '<div class="leader-list">'+(rows.length?rows.map((p,i)=>'<div class="leader"><span><span class="rank">'+(i+1)+'.</span>'+esc(p.name)+'</span><span class="score">'+p.score+'</span></div>').join(""):'<div class="empty">Қатысушылар жоқ.</div>')+'</div>'}
@@ -131,8 +130,8 @@ function renderStudent(state){
  else if(g.phase==="question"){
   const answered=me.answer!==undefined;
   main='<div class="question-top"><span class="counter">'+(g.index+1)+' / '+quizData.length+'</span><div class="timer" id="timer">'+Math.max(0,Math.ceil((g.deadline-Date.now())/1000))+'</div></div><div class="bar"><i style="width:'+((g.index+1)/quizData.length*100)+'%"></i></div><h1 class="question">'+esc(q.question)+'</h1>';
-  if(q.type==="choice")main+='<div class="answers">'+q.options.map((x,i)=>'<button class="answer '+(Number(me.answer)===i?"chosen":"")+'" '+(answered?"disabled":"")+' onclick="sendAnswer('+i+')"><span class="answer-key">'+String.fromCharCode(65+i)+'</span>'+esc(x)+'</button>').join("")+'</div>';
-  else main+='<form class="join-form" onsubmit="submitWord(event)"><input class="field" id="wordInput" maxlength="32" autocomplete="off" placeholder="'+esc(q.placeholder)+'" '+(answered?"disabled":"")+' required><button class="btn btn-primary ready-button" '+(answered?"disabled":"")+'>'+(answered?"Жауап жіберілді ✓":"Жіберу →")+'</button></form>';  main+='<div class="status '+(answered?"good":"")+'">'+(answered?"Жауабыңыз қабылданды. Келесі кезеңді күтіңіз.":"Жауапты таңдаңыз. Уақыт аяқталғанша өзгертуге болады.")+'</div>'
+  if(q.type==="choice")main+='<div class="answers">'+q.options.map((x,i)=>'<button type="button" class="answer '+(String(me.answer)===String(i)?"chosen":"")+'" onclick="sendAnswer('+i+')"><span class="answer-key">'+String.fromCharCode(65+i)+'</span>'+esc(x)+'</button>').join("")+'</div>';
+  else main+='<form class="join-form" onsubmit="submitWord(event)"><input class="field" id="wordInput" maxlength="32" autocomplete="off" placeholder="'+esc(q.placeholder)+'" '+(answered?"disabled":"")+' required><button class="btn btn-primary ready-button" '+(answered?"disabled":"")+'>'+(answered?"Жауап жіберілді ✓":"Жіберу →")+'</button></form>';  main+='<div class="status '+(answered?"good":"")+'">'+(answered?"Таңдауыңыз сақталды. Таймер аяқталғанша өзгерте аласыз.":"Жауапты уақыт біткенше өзгерте аласыз.")+'</div>'
  }
  else if(g.phase==="reveal"&&q.type==="choice"){const correct=me.answer!==undefined&&Number(me.answer)===q.correctAnswer;main='<p class="eyebrow">Дұрыс жауап</p><h1 class="question">'+esc(q.question)+'</h1><div class="status '+(correct?"good":"bad")+'">'+(me.answer===undefined?"Бұл сұраққа жауап бермедіңіз.":(correct?"Дұрыс! Жарайсыз.":"Келесі жолы сәттілік!"))+'</div><div class="side-white"><div class="section-title">Қазіргі ұпайыңыз</div><strong style="font-size:28px">'+(me.score||0)+'</strong></div><p class="sub">Мұғалім келесі сұраққа өткенше күтіңіз.</p>'}
  else if(g.phase==="question"&&q.type==="wordcloud"){main='<p class="eyebrow">Сөз бұлты</p><h1 class="question">'+esc(q.question)+'</h1><div class="cloud">'+state.players.filter(p=>typeof p.answer==="string").map((p,i)=>'<span class="cloud-word" style="font-size:25px">'+esc(p.answer)+'</span>').join("")+'</div><p class="sub">Кластағы сөздер: '+state.players.filter(p=>typeof p.answer==="string").length+'</p>'}
@@ -167,5 +166,7 @@ boot();
 </script>
 </body>
 </html>
+
+
 
 
